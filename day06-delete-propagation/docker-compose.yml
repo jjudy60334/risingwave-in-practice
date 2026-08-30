@@ -1,15 +1,14 @@
-version: '3.9'
-
 services:
   risingwave:
-    image: risingwavelabs/risingwave:latest
+    image: risingwavelabs/risingwave:v3.0.3
     command: playground
-    pull_policy: always
     ports:
       - "4566:4566"   # SQL（PostgreSQL 協議，psql / DBeaver 皆可連）
       - "5691:5691"   # Web Dashboard（http://localhost:5691）
     healthcheck:
-      test: ["CMD-SHELL", "psql -h localhost -p 4566 -d dev -U root -c 'SELECT 1'"]
+      # 注意：這個 image 內沒有 psql / nc，只有 bash——用 /dev/tcp 探測 4566
+      test: ["CMD-SHELL", "bash -c 'printf \"\" > /dev/tcp/127.0.0.1/4566'"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 15s

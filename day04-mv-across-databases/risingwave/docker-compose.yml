@@ -1,6 +1,6 @@
 services:
   risingwave:
-    image: risingwavelabs/risingwave:latest
+    image: risingwavelabs/risingwave:v3.0.3
     container_name: mvdemo-risingwave
     command: single_node   # 單機 all-in-one，零設定
     ports:

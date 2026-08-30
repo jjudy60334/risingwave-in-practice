@@ -6,7 +6,7 @@
 CREATE TABLE orders (
     order_id  INT PRIMARY KEY,
     user_id   INT,
-    amount    DECIMAL(10, 2)
+    amount    DECIMAL
 );
 
 -- Step 2：MV 統計每個 user 的訂單總金額
@@ -23,7 +23,7 @@ GROUP BY user_id;
 CREATE TABLE user_summary (
     user_id      INT PRIMARY KEY,
     order_count  BIGINT,
-    total_amount DECIMAL(10, 2)
+    total_amount DECIMAL
 );
 
 -- Step 4：Sink 把 MV 的 CDC 事件（含 DELETE）寫進 Table

@@ -8,10 +8,18 @@
 -- user 42 的第一筆訂單、加上 user 99 的訂單
 INSERT INTO orders VALUES (1, 42, 100.00), (3, 99, 80.00);
 
+-- 這個 FLUSH 是必要的：它把兩筆 INSERT 切成不同 epoch。
+-- 少了它，下面那筆會和這筆併進同一個 epoch，changelog 就只會看到
+-- 一列 Insert(42,2,350)，看不到 UpdateDelete / UpdateInsert 這一對。
+FLUSH;
+
 -- user 42 的第二筆訂單，分開成另一個 INSERT
 -- （分開送才會落在不同 epoch，等下用 AS CHANGELOG 才看得到 Update；
 --   若塞進同一個 INSERT，同 epoch 內會被合併成單一 Insert(42,2,350)）
 INSERT INTO orders VALUES (2, 42, 250.00);
+
+-- Sink INTO Table 是非同步的，查詢前先 FLUSH 確保已落地
+FLUSH;
 
 SELECT * FROM user_summary ORDER BY user_id;
 -- 預期：
@@ -27,6 +35,8 @@ SELECT * FROM user_summary ORDER BY user_id;
 -- ================================================================
 
 DELETE FROM orders WHERE user_id = 42;
+
+FLUSH;
 
 SELECT * FROM user_summary ORDER BY user_id;
 -- 預期：
@@ -45,6 +55,8 @@ SELECT * FROM user_summary ORDER BY user_id;
 -- ================================================================
 
 INSERT INTO orders VALUES (4, 42, 500.00);
+
+FLUSH;
 
 SELECT * FROM user_summary ORDER BY user_id;
 -- 預期：
@@ -71,6 +83,7 @@ ORDER BY _changelog_row_id;
 -- ---------+-------------+--------------+--------------
 --       42 |           1 |       100.00 |            1   -- Insert（第一筆訂單）
 --       99 |           1 |        80.00 |            1   -- Insert（user 99）
+--   ※ 前兩列在同一個 epoch，實際輸出順序不保證，對調也是正常的
 --       42 |           1 |       100.00 |            4   -- UpdateDelete（撤回舊值）
 --       42 |           2 |       350.00 |            3   -- UpdateInsert（寫入新值）
 --       42 |           2 |       350.00 |            2   -- Delete（user 42 訂單刪光）

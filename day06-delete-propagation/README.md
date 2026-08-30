@@ -36,6 +36,7 @@ docker compose up -d
 ```bash
 docker compose ps
 # STATUS 欄位顯示 healthy 才算好
+# （healthcheck 用容器內的 bash /dev/tcp 探測 4566，image 內沒有 psql）
 ```
 
 > Playground 模式是單節點、一鍵啟動，適合本機實驗。所有資料存在記憶體，容器停掉就清空。
@@ -97,6 +98,7 @@ docker compose down
 | Part 1 | INSERT 3 筆訂單 | user_id=42（2筆）、user_id=99（1筆）|
 | Part 2 | DELETE user_id=42 的所有訂單 | 只剩 user_id=99，42 **消失** |
 | Part 3（彩蛋）| 重新 INSERT user_id=42 | 42 重新出現，order_count 從 1 開始 |
+| Part 4 | 查 `mv_user_summary_changelog` | 完整 changelog 序列，`changelog_op` 1=Insert、2=Delete、3=UpdateInsert、4=UpdateDelete |
 
 Part 2 的關鍵：`orders` 裡 user_id=42 全部刪除後，`mv_user_summary` 的 GROUP BY 沒有任何輸出，
 RisingWave 內部自動產生 `DELETE (user_id=42)` 事件，Sink 忠實寫進 `user_summary`。
@@ -107,6 +109,8 @@ RisingWave 內部自動產生 `DELETE (user_id=42)` 事件，Sink 忠實寫進 `
 
 | 症狀 | 可能原因 | 處理方式 |
 |------|---------|---------|
-| `psql: could not connect` | 容器還沒好 | 等 `docker compose ps` 顯示 healthy |
+| `psql: could not connect` | 容器還沒好 | 等 `docker compose ps` 顯示 healthy；注意 `grep healthy` 會誤中 `(unhealthy)`，要看完整欄位 |
+| `port is already allocated` | 4566 被佔用 | 先停掉其他 RisingWave（例如 Day 05 的官方 compose、或 `day04-mv-across-databases/risingwave`） |
+| `unsupported data type: NUMERIC(10,2)` | 用到未釘版本的新 image | 本範例已釘 `v3.0.3`；若自行改版請確認該版支援的型別 |
 | `ERROR: table "orders" already exists` | 上次沒 teardown | 先跑 `teardown.sql` 再重跑 |
 | `SELECT * FROM user_summary` 查詢為空 | Sink 還沒追上 | 等 1–2 秒再查 |

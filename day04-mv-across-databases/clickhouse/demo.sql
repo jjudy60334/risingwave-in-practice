@@ -1,5 +1,5 @@
 -- ClickHouse MV demo：MV 是 INSERT 觸發器，UPDATE / DELETE 是盲點
--- 跑法：docker compose exec clickhouse clickhouse-client --multiquery < demo.sql
+-- 跑法：docker compose exec -T clickhouse clickhouse-client --multiquery < demo.sql
 
 DROP TABLE IF EXISTS orders_summary_mv;
 DROP TABLE IF EXISTS orders_summary;

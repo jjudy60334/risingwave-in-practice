@@ -22,7 +22,8 @@ INSERT INTO orders VALUES (1,'A',100),(2,'A',200),(3,'B',80);
 
 -- Async MV：定義聚合，靠 refresh 維護（這裡先手動 refresh）
 CREATE MATERIALIZED VIEW orders_summary
-REFRESH ASYNC
+-- 用 MANUAL：ASYNC 會被 base table 變更自動觸發，會和下面「refresh 前」的查詢賽跑
+REFRESH MANUAL
 AS
 SELECT product_id, COUNT(*) AS order_count, SUM(amount) AS total_amount
 FROM orders
@@ -35,8 +36,8 @@ SELECT '寫入 + refresh 後' AS stage, * FROM orders_summary ORDER BY product_i
 -- ★ 重點：刪一筆，看「refresh 前 vs refresh 後」
 DELETE FROM orders WHERE order_id = 2;
 
-SELECT 'refresh 前（可能還是舊值）' AS stage, * FROM orders_summary ORDER BY product_id;
--- Async MV 不是事件驅動：refresh 尚未跑，可能還看到 A | 2 | 300
+SELECT 'refresh 前（仍是舊值）' AS stage, * FROM orders_summary ORDER BY product_id;
+-- MV 不是事件驅動：refresh 尚未跑，這裡一定還是 A | 2 | 300
 
 REFRESH MATERIALIZED VIEW orders_summary WITH SYNC MODE;
 SELECT 'refresh 後' AS stage, * FROM orders_summary ORDER BY product_id;
