@@ -5,11 +5,11 @@
 #
 # 連線：mysql -h 127.0.0.1 -P 9030 -u root
 # ready 檢查（要等 CN 註冊）：
-#   mysql -h127.0.0.1 -P9030 -uroot -e "SHOW COMPUTE NODES\G" | grep 'Alive: true'
+#   docker run --rm --network host mysql:8 mysql -h127.0.0.1 -P9030 -uroot -e "SHOW COMPUTE NODES\G" | grep 'Alive: true'
 
 services:
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: mvdemo-minio
     environment:
       MINIO_ROOT_USER: miniouser
@@ -28,7 +28,7 @@ services:
 
   # 短命服務：等 MinIO ready → 建一組固定 access key 給 StarRocks 用 → 結束
   minio_mc:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: mvdemo-minio-mc
     depends_on:
       minio:
@@ -52,6 +52,9 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+      # FE 要用的 bucket 與 access key 是 minio_mc 建的，必須等它跑完
+      minio_mc:
+        condition: service_completed_successfully
     command:
       - /bin/bash
       - -c
@@ -105,7 +108,8 @@ services:
       test: 'mysql -uroot -hstarrocks-fe -P9030 -e "SHOW COMPUTE NODES\G" | grep "Alive: true"'
       interval: 10s
       timeout: 5s
-      retries: 6
+      retries: 12
+      start_period: 30s
 
 volumes:
   minio_data:

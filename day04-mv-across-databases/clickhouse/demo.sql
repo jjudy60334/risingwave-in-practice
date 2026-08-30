@@ -39,6 +39,10 @@ FROM orders_summary GROUP BY product_id ORDER BY product_id;
 -- ★ 重點：刪掉來源的一筆訂單（mutation，不是 INSERT）
 ALTER TABLE orders_raw DELETE WHERE order_id = 2 SETTINGS mutations_sync = 1;
 
+-- 先證明 DELETE 真的生效了（否則無法排除「mutation 沒跑」的可能）
+SELECT '來源表 orders_raw' AS stage, count() AS rows, sum(amount) AS total FROM orders_raw;
+-- 預期：2 筆 | 180 —— 來源確實少了一筆
+
 SELECT '刪 order_id=2 後' AS stage, product_id,
        sum(order_count) AS order_count, sum(total_amount) AS total_amount
 FROM orders_summary GROUP BY product_id ORDER BY product_id;

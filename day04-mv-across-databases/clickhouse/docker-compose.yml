@@ -1,6 +1,6 @@
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:24.8.14.39
     container_name: mvdemo-clickhouse
     ports:
       - "8123:8123"   # HTTP
