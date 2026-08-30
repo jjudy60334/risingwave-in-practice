@@ -1,0 +1,10 @@
+services:
+  risingwave:
+    image: risingwavelabs/risingwave:latest
+    container_name: mvdemo-risingwave
+    command: single_node   # 單機 all-in-one，零設定
+    ports:
+      - "4566:4566"   # PostgreSQL 協議（psql 連這個）
+    # risingwave 有原生 arm64 image。
+    # ready 檢查：psql -h localhost -p 4566 -d dev -U root -c "SELECT 1"
+    # 註：single_node 預設 in-memory / 本地狀態，重啟資料會消失（demo 足夠）。

@@ -1,0 +1,112 @@
+# StarRocks —— 存算分離（shared-data）模式：FE + CN + MinIO(S3)
+# 為什麼不用 allin1？實測 allin1 的內建 BE 在本機（含原生 arm64）會 crash-loop、
+# 無法註冊；改用官方 shared-data 架構（FE + Compute Node + 物件儲存）就能穩定起來。
+# 三家 image（fe-ubuntu / cn-ubuntu / minio）都有原生 arm64，Apple Silicon 直接跑。
+#
+# 連線：mysql -h 127.0.0.1 -P 9030 -u root
+# ready 檢查（要等 CN 註冊）：
+#   mysql -h127.0.0.1 -P9030 -uroot -e "SHOW COMPUTE NODES\G" | grep 'Alive: true'
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: mvdemo-minio
+    environment:
+      MINIO_ROOT_USER: miniouser
+      MINIO_ROOT_PASSWORD: miniopassword
+    command: server /minio_data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # console
+    volumes:
+      - minio_data:/minio_data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 短命服務：等 MinIO ready → 建一組固定 access key 給 StarRocks 用 → 結束
+  minio_mc:
+    image: minio/mc:latest
+    container_name: mvdemo-minio-mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        until mc alias set myminio http://minio:9000 miniouser miniopassword; do sleep 1; done
+        mc admin user svcacct add \
+          --access-key AAAAAAAAAAAAAAAAAAAA \
+          --secret-key BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB \
+          myminio miniouser || true
+        mc mb -p myminio/starrocks || true
+
+  starrocks-fe:
+    image: starrocks/fe-ubuntu:3.3-latest
+    container_name: mvdemo-starrocks-fe
+    hostname: starrocks-fe
+    user: root
+    depends_on:
+      minio:
+        condition: service_healthy
+    command:
+      - /bin/bash
+      - -c
+      - |
+        ulimit -n 65536
+        cat >> /opt/starrocks/fe/conf/fe.conf <<'EOF'
+        run_mode = shared_data
+        cloud_native_storage_type = S3
+        aws_s3_endpoint = minio:9000
+        aws_s3_path = starrocks
+        aws_s3_access_key = AAAAAAAAAAAAAAAAAAAA
+        aws_s3_secret_key = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+        aws_s3_use_instance_profile = false
+        aws_s3_use_aws_sdk_default_behavior = false
+        enable_load_volume_from_conf = true
+        EOF
+        /opt/starrocks/fe/bin/start_fe.sh --host_type FQDN
+    ports:
+      - "8030:8030"
+      - "9020:9020"
+      - "9030:9030"   # MySQL 協議（demo 連這個）
+    volumes:
+      - fe_data:/opt/starrocks/fe/meta
+    healthcheck:
+      test: ["CMD", "mysql", "-uroot", "-hstarrocks-fe", "-P9030", "-e", "SHOW DATABASES;"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  starrocks-cn:
+    image: starrocks/cn-ubuntu:3.3-latest
+    container_name: mvdemo-starrocks-cn
+    hostname: starrocks-cn
+    user: root
+    depends_on:
+      starrocks-fe:
+        condition: service_healthy
+    command:
+      - /bin/bash
+      - -c
+      - |
+        ulimit -n 65536
+        ulimit -u 65535
+        until mysql --connect-timeout 2 -h starrocks-fe -P9030 -uroot \
+          -e "ALTER SYSTEM ADD COMPUTE NODE \"starrocks-cn:9050\";"; do sleep 2; done
+        /opt/starrocks/cn/bin/start_cn.sh
+    ports:
+      - "8040:8040"
+    healthcheck:
+      test: 'mysql -uroot -hstarrocks-fe -P9030 -e "SHOW COMPUTE NODES\G" | grep "Alive: true"'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+volumes:
+  minio_data:
+  fe_data:

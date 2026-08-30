@@ -1,0 +1,13 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: mvdemo-clickhouse
+    ports:
+      - "8123:8123"   # HTTP
+      - "9000:9000"   # native TCP（clickhouse-client）
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    # clickhouse-server 有原生 arm64 image，Apple Silicon 可直接跑。
+    # ready 檢查：docker compose exec clickhouse clickhouse-client -q "SELECT 1"
