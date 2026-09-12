@@ -1,0 +1,157 @@
+# Day 05 — 部署模式 B：distributed（官方 docker-compose-distributed.yml 的模式）
+#
+# 跟 standalone 同樣是四個元件，差別在這裡是四個獨立容器、各自一個 process。
+# 這是最接近生產（Kubernetes + Operator）的本機形狀：
+# 每個節點可以獨立配資源、獨立重啟、獨立觀察。
+#
+# 精簡自官方 docker/docker-compose-distributed.yml——拿掉 Prometheus、Grafana、
+# Redpanda 與外掛的 risingwave.toml，記憶體調小到筆電跑得動。
+services:
+  # 1/4 Meta Node：全局協調者。先起，其他三個都要向它註冊。
+  meta-node:
+    image: risingwavelabs/risingwave:v3.0.3
+    command:
+      - meta-node
+      - "--listen-addr"
+      - "0.0.0.0:5690"
+      - "--advertise-addr"
+      - "meta-node:5690"
+      - "--dashboard-host"
+      - "0.0.0.0:5691"
+      - "--backend"
+      - "sql"
+      - "--sql-endpoint"
+      - "postgres://postgres:@postgres-0:5432/metadata"
+      - "--state-store"
+      - "hummock+minio://hummockadmin:hummockadmin@minio-0:9301/hummock001"
+      - "--data-directory"
+      - "hummock_001"
+    ports:
+      - "5691:5691"   # Web Dashboard
+    depends_on:
+      postgres-0:
+        condition: service_healthy
+      minio-0:
+        condition: service_healthy
+    environment:
+      RUST_BACKTRACE: "1"
+      ENABLE_TELEMETRY: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '> /dev/tcp/127.0.0.1/5690'"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  # 2/4 Compute Node：所有 Actor 跑在這裡，記憶體大戶。
+  # 想看擴縮容效果，把這個服務 scale 成多份（見 README 步驟五）。
+  compute-node:
+    image: risingwavelabs/risingwave:v3.0.3
+    # advertise-addr 用容器自己的 IP 動態帶入，這樣才能 `--scale compute-node=2`
+    # （寫死 compute-node:5688 的話，兩個副本會用同一個位址向 Meta 註冊）。
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        /risingwave/bin/risingwave compute-node
+        --listen-addr 0.0.0.0:5688
+        --advertise-addr $$(hostname -i):5688
+        --role both
+        --parallelism 4
+        --total-memory-bytes 3221225472
+        --meta-address http://meta-node:5690
+    # --total-memory-bytes 就是文章「坑 1」的主角：RisingWave 認得的記憶體預算。
+    # 生產環境要跟 Pod 的 memory limit 對齊，而且要留 buffer。
+    depends_on:
+      meta-node:
+        condition: service_healthy
+    environment:
+      RUST_BACKTRACE: "1"
+      ENABLE_TELEMETRY: "false"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # 3/4 Frontend Node：SQL 入口，psql 連的是這個。
+  frontend-node:
+    image: risingwavelabs/risingwave:v3.0.3
+    command:
+      - frontend-node
+      - "--listen-addr"
+      - "0.0.0.0:4566"
+      - "--advertise-addr"
+      - "frontend-node:4566"
+      - "--meta-addr"
+      - "http://meta-node:5690"
+      - "--frontend-total-memory-bytes=1073741824"
+    ports:
+      - "4566:4566"   # SQL（PostgreSQL 協議）
+    depends_on:
+      meta-node:
+        condition: service_healthy
+    environment:
+      RUST_BACKTRACE: "1"
+      ENABLE_TELEMETRY: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '> /dev/tcp/127.0.0.1/4566'"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  # 4/4 Compactor Node：後台整理 LSM-Tree。
+  # 獨立成一個容器，正是為了不跟 Compute 搶 I/O。
+  compactor-node:
+    image: risingwavelabs/risingwave:v3.0.3
+    command:
+      - compactor-node
+      - "--listen-addr"
+      - "0.0.0.0:6660"
+      - "--advertise-addr"
+      - "compactor-node:6660"
+      - "--meta-address"
+      - "http://meta-node:5690"
+      - "--compactor-total-memory-bytes=1073741824"
+    depends_on:
+      meta-node:
+        condition: service_healthy
+    environment:
+      RUST_BACKTRACE: "1"
+      ENABLE_TELEMETRY: "false"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  postgres-0:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: postgres
+      POSTGRES_DB: metadata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  minio-0:
+    image: quay.io/minio/minio:latest
+    command: server --address 0.0.0.0:9301 --console-address 0.0.0.0:9400 /data
+    ports:
+      - "9400:9400"   # MinIO Console
+    environment:
+      MINIO_ROOT_USER: hummockadmin
+      MINIO_ROOT_PASSWORD: hummockadmin
+      MINIO_DOMAIN: minio-0
+    entrypoint: >
+      /bin/sh -c '
+      set -e;
+      mkdir -p "/data/hummock001";
+      /usr/bin/docker-entrypoint.sh "$$0" "$$@"
+      '
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9301/minio/health/live || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 20

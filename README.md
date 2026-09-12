@@ -8,6 +8,7 @@
 | 資料夾 | 搭配文章 | 在問什麼 |
 |---|---|---|
 | [`day04-mv-across-databases/`](./day04-mv-across-databases/) | Day 04 各家 MV 大不同 | 刪掉來源那筆，各家的 MV 會不會跟著變？ |
+| [`day05-deployment-modes/`](./day05-deployment-modes/) | Day 05 部署方案全覽 | 官方 compose 起的是一個節點還是四個？兩種模式並排跑一次 |
 | [`day06-delete-propagation/`](./day06-delete-propagation/) | Day 06 Sink INTO Table 連 DELETE 都同步 | MV 的 DELETE 事件怎麼傳到下游 Table？ |
 
 > 維護備註：大綱調整時，資料夾用 `git mv` 改天數前綴、同步更新上表即可。
@@ -21,6 +22,7 @@
   StarRocks 的 C++ 元件 crash
 
 **請一次只跑一個範例**，跑完 `docker compose down -v` 再跑下一個——不同 stack 之間有 port 重疊（9000、4566）。
+`day05-deployment-modes/` 內部的 `standalone/` 與 `distributed/` 也同樣一次只能跑一個。
 
 各範例的詳細跑法見各自的 README。
 

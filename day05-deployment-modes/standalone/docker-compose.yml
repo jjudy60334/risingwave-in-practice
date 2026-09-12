@@ -1,0 +1,95 @@
+# Day 05 — 部署模式 A：standalone（官方 docker-compose.yml 的模式）
+#
+# 四個元件（meta / compute / frontend / compactor）全部跑在同一個 process 裡，
+# 只有一個 risingwave 容器。Meta store 用 PostgreSQL、State store 用 MinIO。
+#
+# 這份檔案是官方 docker/docker-compose.yml 的精簡版：拿掉 Prometheus、Grafana、
+# Redpanda 與外掛的 risingwave.toml，記憶體也調小到筆電跑得動的程度，
+# 保留的是「一個 process 打包四個元件」這個關鍵結構。
+services:
+  risingwave-standalone:
+    image: risingwavelabs/risingwave:v3.0.3
+    # 注意 command 的形狀：一個 standalone 指令，底下掛四組 *-opts。
+    # 這就是「四個元件、一個 process」最直接的證據。
+    command: "standalone --meta-opts=\" \
+                    --listen-addr 0.0.0.0:5690 \
+                    --advertise-addr 0.0.0.0:5690 \
+                    --dashboard-host 0.0.0.0:5691 \
+                    --backend sql \
+                    --sql-endpoint postgres://postgres:@postgres-0:5432/metadata \
+                    --state-store hummock+minio://hummockadmin:hummockadmin@minio-0:9301/hummock001 \
+                    --data-directory hummock_001\" \
+                 --compute-opts=\" \
+                    --listen-addr 0.0.0.0:5688 \
+                    --advertise-addr 0.0.0.0:5688 \
+                    --role both \
+                    --parallelism 4 \
+                    --total-memory-bytes 3221225472 \
+                    --meta-address http://0.0.0.0:5690\" \
+                 --frontend-opts=\" \
+                    --listen-addr 0.0.0.0:4566 \
+                    --advertise-addr 0.0.0.0:4566 \
+                    --health-check-listener-addr 0.0.0.0:6786 \
+                    --meta-addr http://0.0.0.0:5690 \
+                    --frontend-total-memory-bytes=1073741824\" \
+                 --compactor-opts=\" \
+                    --listen-addr 0.0.0.0:6660 \
+                    --advertise-addr 0.0.0.0:6660 \
+                    --meta-address http://0.0.0.0:5690 \
+                    --compactor-total-memory-bytes=1073741824\""
+    ports:
+      - "4566:4566"   # SQL（PostgreSQL 協議）
+      - "5691:5691"   # Web Dashboard
+    depends_on:
+      postgres-0:
+        condition: service_healthy
+      minio-0:
+        condition: service_healthy
+    environment:
+      RUST_BACKTRACE: "1"
+      ENABLE_TELEMETRY: "false"
+      RW_SECRET_STORE_PRIVATE_KEY_HEX: "0123456789abcdef0123456789abcdef"
+    healthcheck:
+      # image 內沒有 psql / nc，只有 bash——用 /dev/tcp 探測 4566
+      test: ["CMD-SHELL", "bash -c '> /dev/tcp/127.0.0.1/4566'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # Meta store：存 Catalog、Actor 佈局、Checkpoint 位置。
+  # 這份掉了，S3 上的資料還在也拼不回來——見文章「坑 3」。
+  postgres-0:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: postgres
+      POSTGRES_DB: metadata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  # State store：本機版的「S3」。MinIO 本身就是物件儲存，
+  # 所以存算分離在架構上成立，缺的只是真實 S3 的延遲與限流特性。
+  minio-0:
+    image: quay.io/minio/minio:latest
+    command: server --address 0.0.0.0:9301 --console-address 0.0.0.0:9400 /data
+    ports:
+      - "9400:9400"   # MinIO Console（帳密同下方 root user / password）
+    environment:
+      MINIO_ROOT_USER: hummockadmin
+      MINIO_ROOT_PASSWORD: hummockadmin
+      MINIO_DOMAIN: minio-0
+    entrypoint: >
+      /bin/sh -c '
+      set -e;
+      mkdir -p "/data/hummock001";
+      /usr/bin/docker-entrypoint.sh "$$0" "$$@"
+      '
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9301/minio/health/live || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
